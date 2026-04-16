@@ -26,6 +26,14 @@ const USER_DIRECTORY = {
 const PRIVILEGED_ROLES = new Set(['admin', 'treasurer'])
 
 const CATEGORIES = ['Supplies', 'Miscellaneous']
+const ALLOWED_RECEIPT_EXTENSIONS = new Set(['pdf', 'jpg', 'jpeg', 'png', 'webp'])
+const ALLOWED_RECEIPT_MIME_TYPES = new Set([
+  'application/pdf',
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'image/jpg',
+])
 
 const initialForm = {
   itemName: '',
@@ -94,6 +102,25 @@ function fileExtensionFor(file) {
   return 'bin'
 }
 
+function isAcceptedReceiptFile(file) {
+  if (!file) return false
+  const extension = fileExtensionFor(file)
+  const mimeType = (file.type || '').toLowerCase()
+  return ALLOWED_RECEIPT_EXTENSIONS.has(extension) || ALLOWED_RECEIPT_MIME_TYPES.has(mimeType)
+}
+
+function receiptContentTypeFor(file) {
+  if (file.type) return file.type
+
+  const extension = fileExtensionFor(file)
+  if (extension === 'pdf') return 'application/pdf'
+  if (extension === 'jpg' || extension === 'jpeg') return 'image/jpeg'
+  if (extension === 'png') return 'image/png'
+  if (extension === 'webp') return 'image/webp'
+
+  return 'application/octet-stream'
+}
+
 async function uploadReceiptToBackend(file, ownerEmail, expenseId) {
   if (!file || !supabase) {
     return { receiptUrl: '', receiptPath: '' }
@@ -103,7 +130,7 @@ async function uploadReceiptToBackend(file, ownerEmail, expenseId) {
   const receiptPath = `${safeEmail}/${expenseId}.${fileExtensionFor(file)}`
 
   const { error: uploadError } = await supabase.storage.from(RECEIPTS_BUCKET).upload(receiptPath, file, {
-    contentType: file.type || 'application/octet-stream',
+    contentType: receiptContentTypeFor(file),
     upsert: true,
   })
 
@@ -343,6 +370,19 @@ function App() {
 
   const handleFileChange = (event) => {
     const selectedFile = event.target.files?.[0]
+
+    if (selectedFile && !isAcceptedReceiptFile(selectedFile)) {
+      setFormError('Unsupported file type. Please upload PDF, JPG, JPEG, PNG, or WEBP.')
+      event.target.value = ''
+      setForm((current) => ({
+        ...current,
+        proofFileName: '',
+        proofFile: null,
+      }))
+      return
+    }
+
+    setFormError('')
     setForm((current) => ({
       ...current,
       proofFileName: selectedFile ? selectedFile.name : '',
