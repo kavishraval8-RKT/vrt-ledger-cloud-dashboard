@@ -468,11 +468,18 @@ function App() {
     try {
       let receiptUrl = ''
       let receiptPath = ''
+      let proofFileName = form.proofFileName
 
       if (form.proofFile) {
-        const receiptUpload = await uploadReceiptToBackend(form.proofFile, session.email, expenseId)
-        receiptUrl = receiptUpload.receiptUrl
-        receiptPath = receiptUpload.receiptPath
+        try {
+          const receiptUpload = await uploadReceiptToBackend(form.proofFile, session.email, expenseId)
+          receiptUrl = receiptUpload.receiptUrl
+          receiptPath = receiptUpload.receiptPath
+        } catch (uploadError) {
+          console.error(uploadError)
+          proofFileName = ''
+          setBackendError('Receipt upload failed on this device. Expense was saved without the receipt file.')
+        }
       }
 
       const nextExpense = {
@@ -482,7 +489,7 @@ function App() {
         quantity,
         purchaseDate: form.purchaseDate,
         category: form.category,
-        proofFileName: form.proofFileName,
+        proofFileName,
         receiptUrl,
         receiptPath,
         authorizedBy: session.email,
@@ -725,7 +732,7 @@ function App() {
                     <FileUp size={16} className="shrink-0 text-slate-900" />
                     <span className="truncate">{form.proofFileName || 'Choose receipt file'}</span>
                   </span>
-                  <input type="file" onChange={handleFileChange} className="hidden" />
+                  <input type="file" accept="image/*,.pdf" onChange={handleFileChange} className="hidden" />
                   <span className="shrink-0 mono text-xs text-slate-400">PDF / JPG / PNG</span>
                 </label>
               </div>
