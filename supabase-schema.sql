@@ -43,6 +43,11 @@ end $$;
 
 alter table public.expenses enable row level security;
 
+drop policy if exists "Allow all read access" on public.expenses;
+drop policy if exists "Allow all insert access" on public.expenses;
+drop policy if exists "Allow all update access" on public.expenses;
+drop policy if exists "Allow all delete access" on public.expenses;
+
 create policy "Allow all read access"
   on public.expenses
   for select
@@ -67,6 +72,11 @@ create policy "Allow all delete access"
 insert into storage.buckets (id, name, public)
 values ('vrt-ledger-receipts', 'vrt-ledger-receipts', true)
 on conflict (id) do nothing;
+
+drop policy if exists "Public read receipts" on storage.objects;
+drop policy if exists "Public upload receipts" on storage.objects;
+drop policy if exists "Public update receipts" on storage.objects;
+drop policy if exists "Public delete receipts" on storage.objects;
 
 create policy "Public read receipts"
   on storage.objects
