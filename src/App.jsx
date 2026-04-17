@@ -25,7 +25,15 @@ const USER_DIRECTORY = {
 
 const PRIVILEGED_ROLES = new Set(['admin', 'treasurer'])
 
-const CATEGORIES = ['Supplies', 'Miscellaneous']
+const QUANTITY_UNITS = ['NOS', 'KG']
+const CATEGORIES = ['Avionics', 'Propulsion', 'Recovery', 'Structure', 'Miscellaneous']
+const CATEGORY_COLORS = {
+  Avionics: '#2563eb',
+  Propulsion: '#ef4444',
+  Recovery: '#10b981',
+  Structure: '#f59e0b',
+  Miscellaneous: '#8b5cf6',
+}
 const ALLOWED_RECEIPT_EXTENSIONS = new Set(['pdf', 'jpg', 'jpeg', 'png', 'webp'])
 const ALLOWED_RECEIPT_MIME_TYPES = new Set([
   'application/pdf',
@@ -39,8 +47,10 @@ const initialForm = {
   itemName: '',
   amount: '',
   quantity: '',
+  quantityUnit: 'NOS',
   purchaseDate: '',
   category: '',
+  miscDescription: '',
   proofFileName: '',
   proofFile: null,
 }
@@ -65,8 +75,10 @@ function normalizeExpenseRecord(row) {
     itemName: row.item_name,
     amount: Number(row.amount),
     quantity: Number(row.quantity),
+    quantityUnit: row.quantity_unit || 'NOS',
     purchaseDate: row.purchase_date,
     category: row.category,
+    miscDescription: row.misc_description || '',
     proofFileName: row.proof_file_name || '',
     receiptUrl: row.receipt_url || '',
     receiptPath: row.receipt_path || '',
@@ -168,6 +180,8 @@ function exportExpensesToCsv(expenses) {
     'Category',
     'Unit Amount',
     'Quantity',
+    'Quantity Unit',
+    'Misc Description',
     'Total Amount',
     'Proof of Purchase',
   ]
@@ -179,6 +193,8 @@ function exportExpensesToCsv(expenses) {
     expense.category,
     expense.amount.toFixed(2),
     expense.quantity,
+    expense.quantityUnit || 'NOS',
+    expense.miscDescription || '',
     (expense.amount * expense.quantity).toFixed(2),
     expense.proofFileName || 'N/A',
   ])
@@ -202,6 +218,14 @@ function isImageReceipt(url) {
 
 function isPdfReceipt(url) {
   return /\.pdf(\?|$)/i.test(url || '')
+}
+
+function formatQuantity(value, unit) {
+  if (unit === 'KG') {
+    return `${Number(value).toFixed(2)} KG`
+  }
+
+  return `${Number(value)} NOS`
 }
 
 function StatCard({ icon, label, value }) {
@@ -273,6 +297,71 @@ function SessionDateCard({ value, onChange }) {
   )
 }
 
+function CategorySpendInsights({ summary, topSpenders, totalAmount }) {
+  const gradient =
+    summary.length === 0
+      ? '#e2e8f0'
+      : (() => {
+          let current = 0
+          const parts = summary.map((entry) => {
+            const start = current
+            current += entry.percent
+            return `${entry.color} ${start.toFixed(2)}% ${current.toFixed(2)}%`
+          })
+          return `conic-gradient(${parts.join(', ')})`
+        })()
+
+  return (
+    <div className="mb-5 grid grid-cols-1 gap-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 lg:grid-cols-2">
+      <div>
+        <p className="text-sm font-semibold text-slate-900">Subsystem Spend Distribution</p>
+        <p className="mt-1 text-xs text-slate-500">Visual split of total spend across engineering subsystems.</p>
+
+        <div className="mt-4 flex items-center gap-4">
+          <div
+            className="h-32 w-32 rounded-full border border-slate-200"
+            style={{ background: gradient }}
+            aria-label="Subsystem spend pie chart"
+          />
+          <div className="space-y-2">
+            {summary.length === 0 && <p className="text-xs text-slate-500">No spend data available for charting yet.</p>}
+            {summary.map((entry) => (
+              <div key={entry.category} className="flex items-center gap-2 text-xs text-slate-700">
+                <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: entry.color }} />
+                <span>{entry.category}</span>
+                <span className="mono text-slate-500">{entry.percent.toFixed(1)}%</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <p className="text-sm font-semibold text-slate-900">Top Spender by Subsystem</p>
+        <p className="mt-1 text-xs text-slate-500">Quick finance insight into ownership of subsystem expense load.</p>
+        <div className="mt-3 space-y-2">
+          {topSpenders.map((entry) => (
+            <div key={entry.category} className="rounded-lg border border-slate-200 bg-white px-3 py-2">
+              <p className="text-xs font-medium text-slate-900">{entry.category}</p>
+              {entry.email ? (
+                <p className="mono mt-1 text-xs text-slate-600">
+                  {entry.email} | {currency.format(entry.total)}
+                </p>
+              ) : (
+                <p className="mono mt-1 text-xs text-slate-400">No spend recorded</p>
+              )}
+            </div>
+          ))}
+          <div className="rounded-lg border border-slate-200 bg-white px-3 py-2">
+            <p className="text-xs text-slate-500">Overall Total</p>
+            <p className="mono text-xs font-semibold text-slate-900">{currency.format(totalAmount)}</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function App() {
   const [loginEmail, setLoginEmail] = useState('')
   const [loginError, setLoginError] = useState('')
@@ -332,6 +421,57 @@ function App() {
     () => visibleExpenses.reduce((sum, row) => sum + row.amount * row.quantity, 0),
     [visibleExpenses],
   )
+
+  const categorySummary = useMemo(() => {
+    const totals = CATEGORIES.reduce((acc, category) => {
+      acc[category] = 0
+      return acc
+    }, {})
+
+    for (const row of expenses) {
+      if (!Object.hasOwn(totals, row.category)) continue
+      totals[row.category] += row.amount * row.quantity
+    }
+
+    const grandTotal = Object.values(totals).reduce((sum, value) => sum + value, 0)
+    return CATEGORIES.map((category) => {
+      const total = totals[category]
+      const percent = grandTotal > 0 ? (total / grandTotal) * 100 : 0
+      return {
+        category,
+        total,
+        percent,
+        color: CATEGORY_COLORS[category],
+      }
+    }).filter((entry) => entry.total > 0)
+  }, [expenses])
+
+  const topSpendersByCategory = useMemo(() => {
+    return CATEGORIES.map((category) => {
+      const spentByEmail = {}
+
+      for (const row of expenses) {
+        if (row.category !== category) continue
+        const current = spentByEmail[row.authorizedBy] || 0
+        spentByEmail[row.authorizedBy] = current + row.amount * row.quantity
+      }
+
+      let winnerEmail = ''
+      let winnerTotal = 0
+      for (const [email, total] of Object.entries(spentByEmail)) {
+        if (total > winnerTotal) {
+          winnerEmail = email
+          winnerTotal = total
+        }
+      }
+
+      return {
+        category,
+        email: winnerEmail,
+        total: winnerTotal,
+      }
+    })
+  }, [expenses])
 
   const entryCountForSession = visibleExpenses.length
 
@@ -455,8 +595,13 @@ function App() {
       return
     }
 
-    if (!Number.isInteger(quantity) || quantity <= 0) {
-      setFormError('Quantity must be a whole number greater than zero.')
+    if (form.quantityUnit === 'NOS' && (!Number.isInteger(quantity) || quantity <= 0)) {
+      setFormError('For NOS, quantity must be a whole number greater than zero.')
+      return
+    }
+
+    if (form.quantityUnit === 'KG' && (!Number.isFinite(quantity) || quantity <= 0)) {
+      setFormError('For KG, quantity must be a number greater than zero.')
       return
     }
 
@@ -467,6 +612,11 @@ function App() {
 
     if (!form.category) {
       setFormError('Select a category.')
+      return
+    }
+
+    if (form.category === 'Miscellaneous' && form.miscDescription.trim().length < 5) {
+      setFormError('Add a short description for Miscellaneous entries (min 5 characters).')
       return
     }
 
@@ -490,8 +640,10 @@ function App() {
       form.itemName.trim().toLowerCase(),
       amount.toFixed(2),
       String(quantity),
+      form.quantityUnit,
       form.purchaseDate,
       form.category,
+      form.miscDescription.trim().toLowerCase(),
     ].join('|')
 
     const now = Date.now()
@@ -527,8 +679,10 @@ function App() {
         itemName: form.itemName.trim(),
         amount,
         quantity,
+        quantityUnit: form.quantityUnit,
         purchaseDate: form.purchaseDate,
         category: form.category,
+        miscDescription: form.miscDescription.trim(),
         proofFileName,
         receiptUrl,
         receiptPath,
@@ -541,8 +695,10 @@ function App() {
         item_name: nextExpense.itemName,
         amount: nextExpense.amount,
         quantity: nextExpense.quantity,
+        quantity_unit: nextExpense.quantityUnit,
         purchase_date: nextExpense.purchaseDate,
         category: nextExpense.category,
+        misc_description: nextExpense.miscDescription,
         proof_file_name: nextExpense.proofFileName,
         receipt_url: nextExpense.receiptUrl,
         receipt_path: nextExpense.receiptPath,
@@ -722,14 +878,26 @@ function App() {
                   <input
                     name="quantity"
                     type="number"
-                    min="1"
-                    step="1"
+                    min={form.quantityUnit === 'KG' ? '0.01' : '1'}
+                    step={form.quantityUnit === 'KG' ? '0.01' : '1'}
                     value={form.quantity}
                     onChange={handleFormChange}
                     className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-950 outline-none transition placeholder:text-slate-400 focus:border-slate-400"
                     placeholder="Enter quantity"
                     required
                   />
+                  <select
+                    name="quantityUnit"
+                    value={form.quantityUnit}
+                    onChange={handleFormChange}
+                    className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-950 outline-none transition focus:border-slate-400"
+                  >
+                    {QUANTITY_UNITS.map((unit) => (
+                      <option key={unit} value={unit}>
+                        {unit}
+                      </option>
+                    ))}
+                  </select>
                 </div>
               </div>
 
@@ -764,6 +932,21 @@ function App() {
                   </select>
                 </div>
               </div>
+
+              {form.category === 'Miscellaneous' && (
+                <div>
+                  <label className="mb-2 block text-sm text-slate-700">Misc Description</label>
+                  <textarea
+                    name="miscDescription"
+                    value={form.miscDescription}
+                    onChange={handleFormChange}
+                    rows={3}
+                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-950 outline-none transition placeholder:text-slate-400 focus:border-slate-400"
+                    placeholder="Explain what this expense was for"
+                    required
+                  />
+                </div>
+              )}
 
               <div>
                 <label className="mb-2 block text-sm text-slate-700">Proof of Purchase (optional)</label>
@@ -827,6 +1010,15 @@ function App() {
               </div>
             ) : (
               <div className="overflow-hidden rounded-2xl border border-slate-200">
+                {isPrivileged && (
+                  <div className="border-b border-slate-200 bg-white p-4">
+                    <CategorySpendInsights
+                      summary={categorySummary}
+                      topSpenders={topSpendersByCategory}
+                      totalAmount={visibleExpenseTotal}
+                    />
+                  </div>
+                )}
                 <div className="overflow-x-auto">
                   <table className="w-full min-w-[860px] border-collapse text-left text-sm">
                     <thead className="bg-slate-50">
@@ -850,8 +1042,11 @@ function App() {
                             <td className="px-4 py-3">
                               <p className="font-medium text-slate-950">{expense.itemName}</p>
                               <p className="mono mt-1 text-xs text-slate-500">
-                                Qty: {expense.quantity} | {expense.category}
+                                Qty: {formatQuantity(expense.quantity, expense.quantityUnit)} | {expense.category}
                               </p>
+                              {expense.category === 'Miscellaneous' && expense.miscDescription && (
+                                <p className="mt-1 text-xs text-slate-500">Note: {expense.miscDescription}</p>
+                              )}
                             </td>
                             {isPrivileged && (
                               <td className="px-4 py-3">

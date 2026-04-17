@@ -6,15 +6,40 @@ create table if not exists public.expenses (
   id uuid primary key,
   item_name text not null,
   amount numeric(12,2) not null,
-  quantity integer not null,
+  quantity numeric(12,3) not null,
+  quantity_unit text not null default 'NOS',
   purchase_date date not null,
   category text not null,
+  misc_description text,
   authorized_by text not null,
   proof_file_name text,
   receipt_url text,
   receipt_path text,
   created_at timestamptz not null default now()
 );
+
+alter table public.expenses
+  add column if not exists quantity_unit text not null default 'NOS';
+
+alter table public.expenses
+  add column if not exists misc_description text;
+
+alter table public.expenses
+  alter column quantity type numeric(12,3)
+  using quantity::numeric(12,3);
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'expenses_quantity_unit_check'
+  ) then
+    alter table public.expenses
+      add constraint expenses_quantity_unit_check
+      check (quantity_unit in ('NOS', 'KG'));
+  end if;
+end $$;
 
 alter table public.expenses enable row level security;
 
